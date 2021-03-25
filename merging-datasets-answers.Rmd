@@ -1,8 +1,10 @@
 ---
 title: "Merging the datasets with tidyverse"
-author: ""
+author: ''
 date: "23/03/2021"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -38,8 +40,6 @@ The task is
 
 ```{r}
 library(tidyverse)
-#install.packages('GGally')
-library(GGally)
 library(magrittr)
 ```
 
@@ -58,42 +58,26 @@ data_pres <- read_csv("data/pres16results.csv")
 
 
 ```{r}
-#looks similar to the data_covid. As it also has the id, state, and county. 
-data_demo %>%
-  str()
-
-#this has county, fips and st. 
-data_pres %>%
-  str()
-
-data_covid %>%
-  str()
+head(data_covid)
+head(data_demo)
+head(data_pres)
 
 ```
 
 - renaming is necessary for `data_demo`
-- need to remove unnecessary entries in fips of `data_pres`
-- problem with the data_pres is that there is also state/national outcomes in there. So I need to filter the fips 
+- need to remove uncessary entries in fips of `data_pres`
+
 
 ```{r}
-#filter out when there is an NA on county. 
-data_pres$filter <- data_pres$fips %>%
-  #lose two counties but that is okay for me.
-  #filter(!is.na(county)) %>%
-  str_detect(pattern = "[[:digit:]]{1}.")
+data_demo <- 
+  data_demo %>% 
+  rename(fips = CountyId)
 
-#filter if filter == T
 data_pres <- data_pres %>%
-  filter(filter == T) %>%
-  rename(state = st) %>%
-  mutate(fips = as.numeric(fips))
+  mutate(fips = as.numeric(fips)) %>%
+  filter(!is.na(fips))
 
-#rename for data_dem0
-data_demo_sub  %<>%
-  rename(fips = CountyId) %>%
-  select(!c(State, County))
-
-#magrittr
+data_covid %<>% filter(!is.na(county))
 
 ```
 
@@ -110,29 +94,24 @@ nrow(data_pres)
 ### Number of counties in each data frame
 
 - Which variable would you use to check?
- fips
 - How many unique counties in each data set?
 - Do they match? (if not does this seem problematic)?
-  do not match, does not seem to be problematic. 
     
 ```{r}
-summary(is.na(data_covid$fips))
+data_covid$fips %>% unique %>% length
+data_demo$fips %>% unique %>% length
+data_pres$fips %>% unique %>% length
 
-data_covid_sub$fips %>% unique %>% length
-data_demo_sub$fips %>% unique %>% length
-data_pres_sub$fips %>% unique %>% length
-
-unique(data_demo_sub$fips) %in% unique(data_covid_sub$fips) %>% table()
-unique(data_demo_sub$fips) %in% unique(data_pres_sub$fips) %>% table()
+unique(data_demo$fips) %in% unique(data_covid$fips) %>% table()
 
 data_covid_check <- 
-  data_covid_sub %>% count(fips, county, state)
+  data_covid %>% count(fips, county, state)
 
-data_covid_check %>% 
-  anti_join(data_demo_sub, by = "fips")
+data_covid_check %>%
+  anti_join(data_demo, by = 'fips')
+data_covid_check %>%
+  anti_join(data_pres, by = 'fips')
 
-data_covid_check %>% 
-  anti_join(data_pres_sub, by = "fips")
 
 ```
 
@@ -143,27 +122,27 @@ data_covid_check %>%
 - From covid dataset, get the latest figures for each county
 
 ```{r}
-data_covid_sub <- data_covid %>%
-  group_by(state) %>%
+data_covid_latest <- data_covid %>% 
+  group_by(fips) %>%
   filter(date == max(date)) %>%
-  ungroup
+  ungroup()
+
 
 ```
 
 
 ### Extract trump votes
+
 presidential votes
   - Keep only trump vote rows
 
 ```{r}
-data_pres_sub <- data_pres %>%
-  filter(cand == "Donald Trump") %>%
-  select(!c(state, county))
+data_trump <- data_pres %>%
+  filter(cand == 'Donald Trump')
 ```
 
 ## Merge the datasets
 
-I will use a inner_join
 
 ### Merging
 
@@ -174,18 +153,23 @@ I will use a inner_join
 - what `_join`?
 
 ```{r}
-data_merged <- data_pres_sub %>%
-  inner_join(data_demo_sub, by = "fips") %>%
-  inner_join(data_covid_sub, by = "fips")
+data_merged <- data_covid_latest %>%
+  inner_join(data_demo %>% select(!c(State, County)), by = "fips") %>%
+  inner_join(data_trump %>% select(!c(county, st)), by = "fips")
 
 ```
 
 ### Create variables for deaths/cases per 1000 population
 
 ```{r}
-data_merged <- data_merged %>%
-  mutate(deaths_per1000 = deaths/(TotalPop/1000),
-         cases_per1000 = cases/(TotalPop/1000))
+
+data_merged <- 
+  data_merged %>%
+  mutate(deaths_per1000 = deaths / TotalPop * 1000) %>%
+  mutate(cases_per1000 = cases / TotalPop * 1000) %>%
+  rename(pct_trump = pct)
+  
+
 ```
 
 ## Using the merged datasets 
@@ -198,7 +182,18 @@ data_merged <- data_merged %>%
 
 ```{r}
 data_merged %>%
-  ggpairs(c("deaths_per1000", "cases_per1000", "IncomePerCap", "Hispanic", "Black", "Unemployment"))
+  select(deaths_per1000, cases_per1000, Hispanic, Black, IncomePerCap, 
+         Unemployment, pct_trump) %>% cor()
+
+data_merged %>%
+  select(deaths_per1000, cases_per1000, Hispanic, Black, IncomePerCap, 
+         Unemployment, pct_trump) %>% pairs()
+
+data_merged %>%
+  ungroup() %>%
+  select(deaths_per1000, cases_per1000, Hispanic, Black, IncomePerCap, 
+         Unemployment, pct_trump) %>% GGally::ggpairs()
+
 
 ```
 
@@ -220,15 +215,10 @@ What we need to do is:
 
 
 ```{r}
-data_pres %<>% 
-  select(!c(state, county))
+data_demo <- data_demo %>% select(!c(State, County))
+data_trump <- data_trump %>% select(!c(county, st, cand))
+data_covid <- data_covid %>% mutate(date = as.character(date))
 
-data_demo %<>% 
-  select(!c(State, County)) %>%
-  rename(fips = CountyId)
-
-data_demo %<>% 
-  mutate()
 ```
 
 
@@ -243,11 +233,14 @@ db <- dbConnect(RSQLite::SQLite(), "~/covid.sqlite")
 
 ### Create/populate tables
 ```{r}
+dbWriteTable(db, "covid", data_covid)
+dbWriteTable(db, "demo", data_demo)
+dbWriteTable(db, "trump", data_trump)
 
 ```
 
 ### Disconnect
 
 ```{r}
-
+dbDisconnect(db)
 ```
